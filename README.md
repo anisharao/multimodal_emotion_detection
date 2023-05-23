@@ -16,3 +16,5 @@ Once features are extracted, the different models can be trained and tested. Mod
 
 main.py:
 Can access Downloading of data into current directory, pre-processing, modeling and finally run the app using arg parse configurations for selected options.
+
+Deployed model: It can be accessed through the pickle file in the repo.
