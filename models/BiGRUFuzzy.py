@@ -1,0 +1,133 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score, f1_score, classification_report
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.utils import to_categorical
+import tensorflow.keras as keras
+import FuzzyAttention
+
+
+class BiGRUFuzzy:
+    """
+    Class to create a Multimodal model using audio and text variant 2
+    """
+    def __init__(self):
+        """
+        Constructs the model using the build model function
+        """
+        self.model = self.build_model()
+
+    def load_dataset(self):
+        """
+        Load the Mel Spectrogram features for the meld dataset
+        :return: X_train, X_val, X_test, y_train, y_val, y_test : vectors for
+        Features and labels for all training, validation, and testing
+        """
+        folder = os.getcwd()
+        mfcc = pd.read_csv(folder + "/train_mfsc_features_ravdes.csv")
+        mfcc_test = pd.read_csv(folder + "/test_mfsc_features_ravdes.csv")
+        mfcc_val = pd.read_csv(folder + "/valid_mfsc_features_ravdes.csv")
+
+        X_train = mfcc.iloc[:, :128]  # Select first 128 columns as features
+        y_train = mfcc.iloc[:, -1]   # Select last column as labels
+
+        X_val = mfcc_val.iloc[:, :128]  # Select first 128 columns as features
+        y_val = mfcc_val.iloc[:, -1]   # Select last column as labels
+
+        X_test = mfcc_test.iloc[:, :128]  # Select first 128 columns as features
+        y_test = mfcc_test.iloc[:, -1]
+
+        # Combine all labels
+        all_labels = np.concatenate([y_train, y_val, y_test])
+
+        # Fit encoder
+        le = LabelEncoder()
+        le.fit(all_labels)
+
+        # Encode the labels
+        y_train = le.transform(y_train)
+        y_val = le.transform(y_val)
+        y_test = le.transform(y_test)
+
+        # One-hot encoding
+        y_train = to_categorical(y_train, num_classes=5)
+        y_val = to_categorical(y_val, num_classes=5)
+        y_test = to_categorical(y_test, num_classes=5)
+
+        X_train = np.expand_dims(X_train, axis=2)
+        X_test = np.expand_dims(X_test, axis=2)
+        X_val = np.expand_dims(X_val, axis=2)
+
+        return X_train, X_val, X_test, y_train, y_val, y_test
+
+    def build_model(self):
+        """
+        Function to build the BiGRU model with FuzzyAttention layer
+        :return: the BiGRU model with FuzzyAttention layer
+        """
+        num_classes = 5
+        model = keras.models.Sequential()
+        model.add(keras.layers.Bidirectional(keras.layers.GRU(64, return_sequences=True, input_shape=(128, 1))))
+        model.add(keras.layers.Bidirectional(keras.layers.GRU(64, return_sequences=True)))
+        model.add(FuzzyAttention.FuzzyAttention())
+        model.add(keras.layers.GlobalMaxPooling1D())
+        model.add(keras.layers.Dropout(.3))
+        model.add(keras.layers.Dense(units=num_classes, activation='softmax'))
+
+        # Compile the model
+        model.compile(loss='categorical_crossentropy', optimizer=keras.optimizers.Adam(learning_rate=0.001),
+                      metrics=['accuracy'])
+
+        return model
+
+    def plot_loss_acc_graph(self, history):
+        """
+        Method to plot the loss and accuracy graphs of the trained model
+        :param history: a dataframe that saved the history of the model while training
+        :return: Displays Plots of loss and accuracy
+        """
+        # Plot training and validation loss
+        plt.plot(history.history['loss'], label='Training Loss')
+        plt.plot(history.history['val_loss'], label='Validation Loss')
+        plt.title('Training vs Validation loss for network')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.show()
+
+        # Plot training and validation accuracy
+        plt.plot(history.history['accuracy'], label='Training Accuracy')
+        plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+        plt.title('Training vs Validation accuracy for network')
+        plt.xlabel('Epochs')
+        plt.ylabel('Accuracy')
+        plt.legend()
+
+    def train(self):
+        """
+        Method to train the BiGRU model with FuzzyAttention layer
+        :return: prints the model summary and plot loss and accuracy
+        """
+        X_train, X_val, X_test, y_train, y_val, y_test = self.load_dataset()
+        history = self.model.fit(X_train, y_train, epochs=40, batch_size=80, validation_data=(X_val, y_val))
+        print(self.model.summary())
+        self.plot_loss_acc_graph(history)
+
+    def predict(self):
+        """
+        Method that calculates the predicted values and compares them to real test labels
+        :return: Prints test accuracy and F1-score
+        """
+        X_train, X_val, X_test, y_train, y_val, y_test = self.load_dataset()
+        eval_score = self.model.evaluate(X_test, y_test)
+        print('Test loss:', eval_score[0])
+        print('Test accuracy:', eval_score[1])
+
+        y_pred = self.model.predict(X_test)
+        y_pred = np.argmax(y_pred, axis=1)
+
+        f1 = f1_score(np.argmax(y_test, axis=1), y_pred, average='weighted')
+        print("F1 score:", f1)
+        print(classification_report(np.argmax(y_test, axis=1), y_pred))
