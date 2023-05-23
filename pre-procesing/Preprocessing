@@ -1,0 +1,496 @@
+import argparse
+import pandas as pd
+import os
+import librosa
+import numpy as np
+from sklearn.model_selection import train_test_split
+import nlpaug.augmenter.word as naw
+import keras
+import random
+from keras import optimizers
+from keras.models import Sequential
+from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
+import math
+import matplotlib.pyplot as plt
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+import string
+from keras.layers import Embedding, SimpleRNN, LSTM, Dense, Dropout
+from keras.regularizers import l2
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score
+from sklearn.metrics import classification_report
+
+
+class Preprocessing:
+    """
+    Class to do preprocessing and feature Exctraction for the RAVDES_TESS_SAVEE and MELD Dataset
+    """
+    def import_data1(folder):
+        """
+        Import Data from the RAVDESS folder
+        :param folder (String) : the folder path for  RAVDESS
+        :return: Ravdess_df (Dataframe): Finale Dataframe structured having path and emotions as columns
+        """
+        Ravdess = folder + "/RAVDES/audio_speech_actors_01-24/"
+        ravdess_directory_list = os.listdir(Ravdess)
+        print(ravdess_directory_list)
+        file_emotion = []
+        file_path = []
+        for dir in ravdess_directory_list:
+            actor = os.listdir(Ravdess + dir)
+            for file in actor:
+                part = file.split('.')[0]
+                part = part.split('-')
+                file_emotion.append(int(part[2]))
+                file_path.append(Ravdess + dir + '/' + file)
+        # dataframe for emotion of files
+        emotion_df = pd.DataFrame(file_emotion, columns=['Emotions'])
+        # dataframe for path of files.
+        path_df = pd.DataFrame(file_path, columns=['Path'])
+        Ravdess_df = pd.concat([emotion_df, path_df], axis=1)
+        # Change integers to actual emotions.
+        Ravdess_df.Emotions.replace(
+            {1: 'neutral', 2: 'calm', 3: 'happy', 4: 'sad', 5: 'angry', 6: 'fear', 7: 'disgust', 8: 'surprise'},
+            inplace=True)
+        return Ravdess_df
+
+    def import_data2(folder):
+        """
+        Import Data from the TESS folder
+        :param folder (String) : the folder path for TESS
+        :return: Tess_df (Dataframe): Finale Dataframe structured having path and emotions as columns
+        """
+        Tess = folder + '/TORONO/'
+        tess_directory_list = os.listdir(Tess)
+        file_emotion = []
+        file_path = []
+        for dir in tess_directory_list:
+            directories = os.listdir(Tess + dir)
+            for file in directories:
+                part = file.split('.')[0]
+                part = part.split('_')[2]
+                if part == 'ps':
+                    file_emotion.append('surprise')
+                else:
+                    file_emotion.append(part)
+                file_path.append(Tess + dir + '/' + file)
+        # dataframe for emotion of files
+        emotion_df = pd.DataFrame(file_emotion, columns=['Emotions'])
+        # dataframe for path of files.
+        path_df = pd.DataFrame(file_path, columns=['Path'])
+        Tess_df = pd.concat([emotion_df, path_df], axis=1)
+        return Tess_df
+
+    def import_data3(folder):
+        """
+        Import Data from the SAVEE folder
+        :param: folder (String) : the folder path for SAVEE
+        :return: Savee_df (Dataframe): Finale Dataframe structured having path and emotions as columns
+        """
+        Savee = "./dataset/SAVEE/"
+        savee_directory_list = os.listdir(Savee)
+        file_emotion = []
+        file_path = []
+        for file in savee_directory_list:
+            file_path.append(Savee + file)
+            part = file.split('_')[1]
+            ele = part[:-6]
+            if ele == 'a':
+                file_emotion.append('angry')
+            elif ele == 'd':
+                file_emotion.append('disgust')
+            elif ele == 'f':
+                file_emotion.append('fear')
+            elif ele == 'h':
+                file_emotion.append('happy')
+            elif ele == 'n':
+                file_emotion.append('neutral')
+            elif ele == 'sa':
+                file_emotion.append('sad')
+            else:
+                file_emotion.append('surprise')
+        # dataframe for emotion of files
+        emotion_df = pd.DataFrame(file_emotion, columns=['Emotions'])
+        # dataframe for path of files.
+        path_df = pd.DataFrame(file_path, columns=['Path'])
+        Savee_df = pd.concat([emotion_df, path_df], axis=1)
+        return Savee_df
+
+
+    def change_pitch(filename, pitch_factor):
+        """
+        Change the pitch of an audio
+        :param filename (String) : path of the audio file
+               pitch_factor (float) : factor used to change the pitch
+        :return:audio(wav): audio with changed pitch
+        """
+        y, sr = librosa.load(filename, duration=3, offset=0.5)
+        return librosa.effects.pitch_shift(y=y, sr=sr, n_steps=pitch_factor, bins_per_octave=12)
+
+
+    def extract_mfcc(filename):
+        """
+        Extract MFCC features
+        :param:filename (String) : path of the audio file
+        :return:mfcc(vector): Vector of MFCC features for the audio file
+
+        """
+        NUM_MFCC = 20
+        y, sr = librosa.load(filename, duration=3, offset=0.5)
+        mfcc = np.mean(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=NUM_MFCC).T, axis=0)
+        return mfcc
+
+    def extract_mfsc(filename):
+        """
+        Extract Mel-Spectrogram features
+        :param:filename (String) : path of the audio file
+        :return:mfsc(vector): Vector of Mel-spectrogram features for the audio file
+        """
+        NUM_MELS = 128
+        y, sr = librosa.load(filename, duration=3, offset=0.5)
+        mfsc = np.mean(librosa.feature.melspectrogram(y=y, sr=sr, n_mels=NUM_MELS).T, axis=0)
+        return mfsc
+
+    def extract_mfcc_DA(filename, DA, factor):
+        """
+        Extracts MFCC features while augmenting the audio file
+        :param: filename(String): Path to audio
+                DA (String): Data augmentation method
+                factor (Float) : Factor used by the augmentation method
+
+        :return: mfcc (vector) : MFCC Features
+        """
+        NUM_MFCC = 20
+        y, sr = librosa.load(filename, duration=3, offset=0.5)
+        y = DA(Preprocessing.clean_audio(y), factor)
+        mfcc = np.mean(librosa.feature.mfcc(y=y, sr=sr, n_mfcc=NUM_MFCC).T, axis=0)
+        return mfcc
+
+    def extract_mfsc_DA(filename, DA, factor):
+        """
+        Extracts Mel-Spectrogram features while augmenting the audio file
+        :param filename(String): Path to audio
+                DA (String): Data augmentation method
+                factor (Float) : Factor used by the augmentation method
+        :return:mfsc (vector) : Mel-Spectrogram Features
+
+        """
+        NUM_MELS = 128
+        y, sr = librosa.load(filename, duration=3, offset=0.5)
+        y = DA(Preprocessing.clean_audio(y), factor)
+        mfsc = np.mean(librosa.feature.melspectrogram(y=y, sr=sr, n_mels=NUM_MELS).T, axis=0)
+        return mfsc
+
+    def clean_audio(y):
+        """
+        Cleans audio by trimming up to 20db
+        :param y(String): Path to audio
+        :return: y_trimmed () : clean audio
+
+        """
+        y_trimmed, _ = librosa.effects.trim(y, top_db=20)
+        return y_trimmed
+
+    def add_noise(audio, rms=2):
+        """
+        Add noise to the audio file
+        :param audio (wav): audio file
+                rms (int) : Factor
+        :return:audio + noise (wav) : another audio file with noise added
+        """
+        rms = math.sqrt(np.mean(audio ** 2))  # check Additive White Gaussian Noise (AWGN)
+        noise = np.random.normal(0, rms, audio.shape[0])
+        return audio + noise
+
+    def time_stretch(audio, stretch_factor):
+        """
+        Stretch the time for an audio file
+        :param audio(wav): audio file
+               Stretch_factor (float) : Factor used to stretch the time of the audio
+        :return: wav file : another audio file with time stretching
+        """
+
+        return librosa.effects.time_stretch(audio, rate=stretch_factor)
+
+    def change_volume(audio, volume_factor):
+        """
+        change the volume for an audio file
+        :param audio (wav): audio file
+                volume_favtor (float) : Factor used to change the volume of the audio
+
+        :return: wav file : another audio file with volume changed
+        """
+        return np.multiply(audio, volume_factor)
+
+    def shift_audio(audio, shift_factor):
+        """
+        shift the audio file
+        :param audio (wav): audio file
+               shift_factor (float) : Factor used to shift the audio
+
+        :return: wav file : another audio file with shifting
+        """
+
+        return np.roll(audio, shift_factor)
+
+    def synonym_augment(text):
+        """
+        Augments text by replacing words with a synonym of it based on a probability of 0.2
+        :param text (String): The text to be augmented
+        :return:augmented_text (String): Augmented text data
+
+        """
+        aug = naw.SynonymAug(aug_p=0.2)
+        augmented_text = aug.augment(text)
+        return augmented_text
+
+    def randomize_sentence(sentence):
+        """
+        Augments text by shuffling the words in a random order
+        :param sentence (String): The text to be augmented
+        :return: new_sentence (String): Augmented text data
+
+        """
+        # split the sentence into words
+        words = sentence.split()
+        # shuffle the words
+        random.shuffle(words)
+        # join the shuffled words back into a sentence
+        new_sentence = ' '.join(words)
+        return new_sentence
+
+    def preprocess_meld(self):
+        """
+        All steps for MELD preprocessing, CSV files of different feature are saved in the current folder
+        """
+        print("Meld processing..")
+        folder = os.getcwd()
+        # Load the CSV file containing the dataset
+        train = pd.read_csv(folder + '/MELD/train_sent_emo.csv')
+        val = pd.read_csv(folder + '/MELD/dev_sent_emo.csv')
+        test = pd.read_csv(folder + '/MELD/test_sent_emo.csv')
+
+        # define train
+        audio_dir1 = folder + '/MELD/audio_train/'
+        train_audio = audio_dir1 + 'dia' + train['Dialogue_ID'].astype(str) + '_utt' + train['Utterance_ID'].astype(
+            str) + '.wav'
+        train_text = pd.DataFrame(train['Utterance'])
+        y_train = pd.DataFrame(train['Emotion'])
+
+
+        audio_dir2 = folder + '/MELD/audio_val/'
+        val_audio = audio_dir2 + 'dia' + val['Dialogue_ID'].astype(str) + '_utt' + val['Utterance_ID'].astype(
+            str) + '.wav'
+        val_text = pd.DataFrame(val['Utterance'])
+        y_val = pd.DataFrame(val['Emotion'])
+
+        # define test
+        audio_dir3 = folder + '/MELD/audio_test/'
+        test_audio = audio_dir3 + 'dia' + test['Dialogue_ID'].astype(str) + '_utt' + test['Utterance_ID'].astype(
+            str) + '.wav'
+        test_text = pd.DataFrame(test['Utterance'])
+        y_test = pd.DataFrame(test['Emotion'])
+
+        ####### Extract MFCC from training data with augmentation
+        #########################################################
+        X_mfcc1 = train_audio.apply(lambda x: Preprocessing.extract_mfcc(x))
+        X_mfcc2 = train_audio.apply(lambda x: Preprocessing.extract_mfcc_DA(x, Preprocessing.add_noise, 2))
+        X_mfcc3 = train_audio.apply(lambda x: Preprocessing.extract_mfcc_DA(x, Preprocessing.time_stretch, 1.2))
+        X_mfcc_train = np.concatenate((X_mfcc1, X_mfcc2, X_mfcc3), axis=0)
+        X_train = pd.DataFrame([x for x in X_mfcc_train])
+        print(X_train)
+        all_labels = pd.DataFrame(np.concatenate((y_train, y_train, y_train), axis=0))
+
+
+        X_train.reset_index(drop=True, inplace=True)
+        all_labels.reset_index(drop=True, inplace=True)
+        mfcc_train = pd.concat([X_train, all_labels], axis=1, ignore_index=True)
+
+        X_mfcc_val = val_audio.apply(lambda x: Preprocessing.extract_mfcc(x))
+        X_val = pd.DataFrame([x for x in X_mfcc_val])
+        X_val.reset_index(drop=True, inplace=True)
+        y_val.reset_index(drop=True, inplace=True)
+        mfcc_val = pd.concat([X_val, y_val], axis=1, ignore_index=True)
+
+        X_mfcc_test = test_audio.apply(lambda x: Preprocessing.extract_mfcc(x))
+        X_test = pd.DataFrame([x for x in X_mfcc_test])
+        X_test = pd.DataFrame(X_test)
+        X_test.reset_index(drop=True, inplace=True)
+        y_test.reset_index(drop=True, inplace=True)
+        mfcc_test = pd.concat([X_test, y_test], axis=1, ignore_index=True)
+
+        mfcc_train.to_csv("train_mfcc_features_Meld.csv", index=False)
+        mfcc_val.to_csv("val_mfcc_features_Meld.csv", index=False)
+        mfcc_test.to_csv("test_mfcc_features_Meld.csv", index=False)
+
+        ####### Extract MFSC from training data with augmentation
+        #########################################################
+        X_mfsc1 = train_audio.apply(lambda x: Preprocessing.extract_mfsc(x))
+        X_mfsc2 = train_audio.apply(lambda x: Preprocessing.extract_mfsc_DA(x, Preprocessing.add_noise, 2))
+        X_mfsc3 = train_audio.apply(lambda x: Preprocessing.extract_mfsc_DA(x, Preprocessing.time_stretch, 1.2))
+        X_mfsc_train = np.concatenate((X_mfsc1, X_mfsc2, X_mfsc3), axis=0)
+        X_train = pd.DataFrame([x for x in X_mfsc_train])
+
+        all_labels = pd.DataFrame(np.concatenate((y_train, y_train, y_train), axis=0), columns=["Emotions"])
+        X_train.reset_index(drop=True, inplace=True)
+        all_labels.reset_index(drop=True, inplace=True)
+        mfsc_train = pd.concat([X_train, all_labels], axis=1, ignore_index=True)
+
+        X_mfsc_val = val_audio.apply(lambda x: Preprocessing.extract_mfsc(x))
+        X_val = pd.DataFrame([x for x in X_mfsc_val])
+        X_val.reset_index(drop=True, inplace=True)
+        y_val.reset_index(drop=True, inplace=True)
+        mfsc_val = pd.concat([X_val, y_val], axis=1, ignore_index=True)
+        print(mfsc_val)
+
+        X_mfsc_test = test_audio.apply(lambda x: Preprocessing.extract_mfsc(x))
+        X_test = pd.DataFrame([x for x in X_mfsc_test])
+        X_test = pd.DataFrame(X_test)
+        X_test.reset_index(drop=True, inplace=True)
+        y_test.reset_index(drop=True, inplace=True)
+        mfsc_test = pd.concat([X_test, y_test], axis=1, ignore_index=True)
+
+        mfsc_train.to_csv("train_mfsc_features_Meld.csv", index=False)
+        mfsc_val.to_csv("val_mfsc_features_Meld.csv", index=False)
+        mfsc_test.to_csv("test_mfsc_features_Meld.csv", index=False)
+
+        ####### Vectorize text data with augmentation
+        #########################################################
+
+        train_text2 = pd.DataFrame(train_text.apply(lambda row: Preprocessing.randomize_sentence(row["Utterance"]), axis=1))
+        train_text3 = pd.DataFrame(list(train_text.apply(lambda row: Preprocessing.synonym_augment(row["Utterance"]), axis=1)))
+        train_text_final = np.concatenate((train_text, train_text2, train_text3), axis=0)
+        train_text_final = [x for x in train_text_final]
+        train_text_final = pd.DataFrame(train_text_final, columns=["Utterance"])
+
+        ### converting 20000 most frequent words to integer
+        # Set hyperparameters
+        frequentWord = 20000  # maximum number of words to include in the vocabulary
+        maxlen = 400  # maximum length of each input sequence
+        tokenizer = Tokenizer(num_words=frequentWord)
+        tokenizer.fit_on_texts(train_text_final["Utterance"])
+
+        IntegerizedData_train = pd.Series(tokenizer.texts_to_sequences(train_text_final['Utterance']))
+        IntegerizedData_val = pd.Series(tokenizer.texts_to_sequences(val_text['Utterance']))
+        IntegerizedData_test = pd.Series(tokenizer.texts_to_sequences(test_text['Utterance']))
+
+        X_text_train = pd.DataFrame(pad_sequences(IntegerizedData_train, maxlen=maxlen))
+        X__text_val = pd.DataFrame(pad_sequences(IntegerizedData_val, maxlen=maxlen))
+        X_text_test = pd.DataFrame(pad_sequences(IntegerizedData_test, maxlen=maxlen))
+
+        X_text_train.reset_index(drop=True, inplace=True)
+        y_train.reset_index(drop=True, inplace=True)
+        X_text_train_csv = pd.concat([X_text_train, all_labels], axis=1, ignore_index=True)
+
+        X__text_val.reset_index(drop=True, inplace=True)
+        y_test.reset_index(drop=True, inplace=True)
+        X_text_val_csv = pd.concat([X__text_val, y_val], axis=1, ignore_index=True)
+
+        X_text_test.reset_index(drop=True, inplace=True)
+        y_test.reset_index(drop=True, inplace=True)
+        X_text_test_csv = pd.concat([X_text_test, y_test], axis=1, ignore_index=True)
+
+        X_text_train_csv.to_csv("train_text_Meld.csv", index=False)
+        X_text_val_csv.to_csv("val_text_Meld.csv", index=False)
+        X_text_test_csv.to_csv("test_text_Meld.csv", index=False)
+    def preprocess_ravdess(self):
+        """
+        All steps for RAVDESS-TESS-SAVEE preprocessing, CSV files of different feature are saved in the current folder
+        """
+
+        print("pr-processsing Combined Audio")
+
+        Ravdess_df = Preprocessing.import_data1("dataset")
+        Tess_df = Preprocessing.import_data2("dataset")
+        Savee_df = Preprocessing.import_data3("dataset")
+
+        aggregated_data = pd.concat([Ravdess_df, Tess_df, Savee_df], axis=0)
+        # Shuffle the dataframe using the sample method
+        aggregated_data = aggregated_data.sample(frac=1).reset_index(drop=True)
+        # Drop rows where Emotions is 'surprise' or 'disgust' or 'calm'
+        aggregated_data = aggregated_data[~aggregated_data['Emotions'].isin(['disgust', 'surprise', 'calm'])]
+        aggregated_data.to_csv("data_path.csv", index=False)
+
+        #test_data = aggregated_data[aggregated_data['Path'].str.contains('Actor_0')]
+        #train_val_data = aggregated_data[~aggregated_data['Path'].str.contains('Actor_0')]
+
+        X = aggregated_data[["Path"]]
+        y = aggregated_data[["Emotions"]]
+        x_train_val, x_test, y_train_val, y_test = train_test_split(X, y, stratify=y,
+                                                                    test_size=0.20, random_state=42)
+        x_train, x_val, y_train, y_val = train_test_split(x_train_val, y_train_val, stratify=y_train_val,
+                                                          test_size=0.10, random_state=42)
+
+        ####### Extract MFCC from training data with augmentation
+        #########################################################
+        X_mfcc1 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfcc(x))
+        X_mfcc2 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfcc_DA(x, Preprocessing.add_noise, 2))
+        X_mfcc3 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfcc_DA(x, Preprocessing.time_stretch, 1.2))
+        X_mfcc4 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfcc_DA(x, Preprocessing.change_volume, 0.8))
+        X_mfcc5 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfcc_DA(x, Preprocessing.shift_audio, 1000))
+        X_mfcc = np.concatenate((X_mfcc1, X_mfcc2, X_mfcc3, X_mfcc4, X_mfcc5), axis=0)
+        X = [x for x in X_mfcc]
+        X = pd.DataFrame(X)
+
+        labels = y_train[['Emotions']]
+        all_labels = pd.DataFrame(np.concatenate((labels, labels, labels, labels, labels), axis=0), columns=["label"])
+        X.reset_index(drop=True, inplace=True)
+        all_labels.reset_index(drop=True, inplace=True)
+        mfcc_train = pd.concat([X, all_labels], axis=1, ignore_index=True)  ### how to keep labels ??? change 40 later
+
+        # Extract Features for validation data
+        mfcc_val = x_val['Path'].apply(lambda x: Preprocessing.extract_mfcc(x))
+        X_val = [x for x in mfcc_val]
+        X_val = pd.DataFrame(X_val)
+        X_val.reset_index(drop=True, inplace=True)
+        y_val.reset_index(drop=True, inplace=True)
+        mfcc_val = pd.concat([X_val, y_val], axis=1, ignore_index=True)  ### how to keep labels ??? change 40 later
+
+        # Extract Features for Testing data
+        mfcc_test = x_test['Path'].apply(lambda x: Preprocessing.extract_mfcc(x))
+        X_test = [x for x in mfcc_test]
+        X_test = pd.DataFrame(X_test)
+        X_test.reset_index(drop=True, inplace=True)
+        y_test.reset_index(drop=True, inplace=True)
+        mfcc_test = pd.concat([X_test, y_test], axis=1, ignore_index=True)  ### how to keep labels ??? change 40 later
+
+        mfcc_train.to_csv("train_mfcc_features_ravdes.csv", index=False)
+        mfcc_val.to_csv("valid_mfcc_features_ravdes.csv", index=False)
+        mfcc_test.to_csv("test_mfcc_features_ravdes.csv", index=False)
+
+        ####### Extract MFSC from training data with augmentation
+        #########################################################
+        X_mfsc1 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfsc(x))
+        X_mfsc2 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfsc_DA(x, Preprocessing.add_noise, 2))
+        X_mfsc3 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfsc_DA(x, Preprocessing.time_stretch, 1.2))
+        X_mfsc4 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfsc_DA(x, Preprocessing.change_volume, 0.8))
+        X_mfsc5 = x_train['Path'].apply(lambda x: Preprocessing.extract_mfsc_DA(x, Preprocessing.shift_audio, 1000))
+        X_mfsc = np.concatenate((X_mfsc1, X_mfsc2, X_mfsc3, X_mfsc4, X_mfsc5), axis=0)
+        X_mel = [x for x in X_mfsc]
+        X_mel = pd.DataFrame(X_mel)
+
+        X_mel.reset_index(drop=True, inplace=True)
+        mfsc_train = pd.concat([X_mel, all_labels], axis=1, ignore_index=True)
+
+        # Extract Features for validation data
+        mfsc_val = x_val['Path'].apply(lambda x: Preprocessing.extract_mfsc(x))
+        X_val_mfsc = [x for x in mfsc_val]
+        X_val_mfsc = pd.DataFrame(X_val_mfsc)
+        X_val_mfsc.reset_index(drop=True, inplace=True)
+        mfsc_val = pd.concat([X_val_mfsc, y_val], axis=1, ignore_index=True)  ### how to keep labels ??? change 40 later
+
+        # Extract Features for Testing data
+        mfsc_test = x_test['Path'].apply(lambda x: Preprocessing.extract_mfsc(x))
+        X_test_mfsc = [x for x in mfsc_test]
+        X_test_mfsc = pd.DataFrame(X_test_mfsc)
+        X_test_mfsc.reset_index(drop=True, inplace=True)
+        mfsc_test = pd.concat([X_test_mfsc, y_test], axis=1,
+                              ignore_index=True)  ### how to keep labels ??? change 40 later
+
+        mfsc_train.to_csv("train_mfsc_features_ravdes.csv", index=False)
+        mfsc_val.to_csv("valid_mfsc_features_ravdes.csv", index=False)
+        mfsc_test.to_csv("test_mfsc_features_ravdes.csv", index=False)
