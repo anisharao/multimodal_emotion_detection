@@ -13,7 +13,7 @@ model_path = folder +"/biGRU_audio_model_deploy.pkl"
 with open(model_path, "rb") as file:
     model = pickle.load(file)
 
-os.environ["OPENAI_API_KEY"] = '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' #'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'
+os.environ["OPENAI_API_KEY"] = 'ADD_API_KEY' 
 NUM_MFCC = 20
 N_FFT = 2048
 HOP_LENGTH = 512
