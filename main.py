@@ -27,8 +27,8 @@ if __name__ == '__main__':
         Dowmload the MELD dataset 
         """
         download_meld = Download_Data.Download_Data()
-        # download_meld.download_meld_csv_data()
-        # download_meld.download_meld_audio_data()
+        download_meld.download_meld_csv_data()
+        download_meld.download_meld_audio_data()
         download_meld.download_combined_audio()
 
 
