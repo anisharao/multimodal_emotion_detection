@@ -15,6 +15,6 @@ Modeling:
 Once features are extracted, the different models can be trained and tested. Model summary, train vs val graphs for loss and accuracy will be seen after training. After testing, classificatio report will be provided for analysis.
 
 main.py:
-Can access Downloading of data into current directory, pre-processing, modeling and finally run the app using arg parse configurations for selected options.
+Can access Downloading of data into current directory, pre-processing, modeling and finally run the app using arg parse configurations for selected options. To run app, API key must be updated in app.py.
 
 Deployed model: It can be accessed through the pickle file in the repo.
