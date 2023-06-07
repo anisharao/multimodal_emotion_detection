@@ -1,5 +1,8 @@
 # Multimodal Emotion Recognition System to Recommend Affirmations
 
+Abstract: Research suggests that self-affirmation energizes the brain system and stimulates neuroplasticity. Hence, automatic speech detection can detect an individual's current mood, and suggesting self-affirmation can help mitigate an individual's negative emotions and feelings. For the purpose of emotion detection inherent in a person’s speech, a multimodal network is proposed. A dual modal  network using audio and text has proven to be more effective rather than their individual classification in past research. Additionally the best network is deployed to build a custom chatbot based on GPT trained on acclaimed self-help books to recommend affirmations. The multimodal network using LSTM and GRU for text and audio respectively achieved an F1-score of 44% and a two layer Bi-GRU network with Self Attention for audio achieved a F1-score of 80%. The audio classifier was chosen to be deployed for the chatbot prototype. Through this study a different modality was used to interact with a fine-tuned pre-trained language model.   
+
+
 How to Run?
 1. Download code.zip and extract it
 2. Open main.py and pass argument to run (--download_data download_data) to download MELD, RAVDESS, SAVEE and TESS datasets into current directory
